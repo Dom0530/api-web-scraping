@@ -4,61 +4,62 @@ import boto3
 import uuid
 
 def lambda_handler(event, context):
-    # URL de la página web que contiene la tabla
-    url = "https://sgonorte.bomberosperu.gob.pe/24horas/?criterio=/"
 
-    # Realizar la solicitud HTTP a la página web
-    response = requests.get(url)
+    url = "https://ultimosismo.igp.gob.pe/ultimo-sismo/sismos-reportados"
+
+    response = requests.get(url, timeout=10)
     if response.status_code != 200:
-        return {
-            'statusCode': response.status_code,
-            'body': 'Error al acceder a la página web'
-        }
+        return {"statusCode": response.status_code, "body": "Error al acceder"}
 
-    # Parsear el contenido HTML de la página web
-    soup = BeautifulSoup(response.content, 'html.parser')
+    soup = BeautifulSoup(response.text, "html.parser")
 
-    # Encontrar la tabla en el HTML
-    table = soup.find('table')
+    table = soup.find("table")
     if not table:
-        return {
-            'statusCode': 404,
-            'body': 'No se encontró la tabla en la página web'
-        }
+        return {"statusCode": 404, "body": "Tabla no encontrada"}
 
-    # Extraer los encabezados de la tabla
-    headers = [header.text for header in table.find_all('th')]
-
-    # Extraer las filas de la tabla
     rows = []
-    for row in table.find_all('tr')[1:]:  # Omitir el encabezado
-        cells = row.find_all('td')
-        rows.append({headers[i+1]: cell.text for i, cell in enumerate(cells)})
 
-    # Guardar los datos en DynamoDB
-    dynamodb = boto3.resource('dynamodb')
-    table = dynamodb.Table('TablaWebScrapping')
+    # recorrer filas reales
+    for tr in table.find("tbody").find_all("tr"):
 
-    # Eliminar todos los elementos de la tabla antes de agregar los nuevos
-    scan = table.scan()
-    with table.batch_writer() as batch:
-        for each in scan['Items']:
-            batch.delete_item(
-                Key={
-                    'id': each['id']
-                }
-            )
+        tds = tr.find_all("td")
+        if len(tds) < 5:
+            continue
 
-    # Insertar los nuevos datos
-    i = 1
-    for row in rows:
-        row['#'] = i
-        row['id'] = str(uuid.uuid4())  # Generar un ID único para cada entrada
-        table.put_item(Item=row)
-        i = i + 1
+        # 1. Reporte sísmico: viene con <br>, separar líneas
+        reporte_raw = tds[0].get_text("\n", strip=True).split("\n")
+        reporte = reporte_raw[0]
+        codigo = reporte_raw[1]
 
-    # Retornar el resultado como JSON
-    return {
-        'statusCode': 200,
-        'body': rows
-    }
+        referencia = tds[1].get_text(strip=True)
+        fecha_hora = tds[2].get_text(strip=True)
+        magnitud = tds[3].get_text(strip=True)
+
+        link = tds[4].find("a")["href"] if tds[4].find("a") else None
+
+        rows.append({
+            "reporte": reporte,
+            "codigo": codigo,
+            "referencia": referencia,
+            "fecha_hora_local": fecha_hora,
+            "magnitud": float(magnitud),
+            "url_reporte": "https://ultimosismo.igp.gob.pe" + link if link else None
+        })
+
+    # Guardar en DynamoDB
+    dynamodb = boto3.resource("dynamodb")
+    table_dynamo = dynamodb.Table("TablaWebScrapping")
+
+    # borrar antiguos
+    scan = table_dynamo.scan()
+    with table_dynamo.batch_writer() as batch:
+        for item in scan.get("Items", []):
+            batch.delete_item(Key={"id": item["id"]})
+
+    # insertar nuevos
+    for i, row in enumerate(rows, start=1):
+        row["#"] = i
+        row["id"] = str(uuid.uuid4())
+        table_dynamo.put_item(Item=row)
+
+    return {"statusCode": 200, "body": rows}
