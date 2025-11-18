@@ -3,7 +3,7 @@ import boto3
 import uuid
 import datetime
 
-DDB_TABLE_NAME = "TablaWebScrapping"  # cambia si es necesario
+DDB_TABLE_NAME = "TablaWebScrapping"  
 
 QUERY_URL = (
     "https://ide.igp.gob.pe/arcgis/rest/services/"
@@ -13,7 +13,6 @@ QUERY_URL = (
 def arcgis_time_to_iso(ms):
     if ms is None:
         return None
-    # ArcGIS timestamps are milliseconds since epoch
     dt = datetime.datetime.utcfromtimestamp(ms / 1000.0)
     return dt.isoformat() + "Z"
 
@@ -22,7 +21,7 @@ def lambda_handler(event, context):
         "where": "1=1",
         "outFields": "*",
         "f": "json",
-        "resultRecordCount": 2000
+        "resultRecordCount": 200
     }
 
     headers = {
@@ -40,7 +39,7 @@ def lambda_handler(event, context):
     dynamodb = boto3.resource("dynamodb")
     table = dynamodb.Table(DDB_TABLE_NAME)
 
-    # Limpiar tabla (opcional)
+    # Limpiar tabla 
     scan = table.scan()
     with table.batch_writer() as batch:
         for item in scan.get("Items", []):
@@ -76,7 +75,7 @@ def lambda_handler(event, context):
             "reporte": attr.get("reporte"),
         }
 
-        # DynamoDB no acepta None → remover claves con None
+        # remover claves con None
         item = {k: v for k, v in item.items() if v is not None}
 
         rows.append(item)
@@ -85,5 +84,6 @@ def lambda_handler(event, context):
     return {
         "statusCode": 200,
         "count": len(rows),
-        "body": rows[:5]  # devolver solo un preview
+        "body": rows[:5]  
     }
+
